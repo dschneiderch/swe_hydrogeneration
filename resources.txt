@@ -1,0 +1,4 @@
+https://www.eia.gov/electricity/data/eia923/
+https://datagateway.nrcs.usda.gov
+https://nhaap.ornl.gov/content/nhaap-data-sources
+https://nhaap.ornl.gov/submission-id/eha-3224
