@@ -3,6 +3,7 @@
 .RData
 .Ruserdata
 data/*
+!data/0readme.txt
 .DS_Store
 map.qgd
 map.qgs
