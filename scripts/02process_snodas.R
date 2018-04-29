@@ -31,7 +31,8 @@ purrr:::walk(rev(fns),function(f){
   myfile <- paste0('swe_tuo_',dte_num,'.tif')
   myfile_full <- file.path(dir_tuo,myfile)
   
-  # thre is a comment on line 4 of the metadata file that is causing an error for some files. I dont think its important for the general structure  so removing
+  # there are lines of the metadata file that is causing an error for some files. I dont think its important for the general structure  so removing
+  # bug reported, and it should be fixed in gdal 2.3.0 https://github.com/OSGeo/gdal/issues/506
   rl <- read_lines(f)
   rl2 <- str_trim(rl)
   rl3 <- map_chr(rl2,function(x){
