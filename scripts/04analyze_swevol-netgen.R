@@ -1,14 +1,14 @@
-#' Analyze monthly power generation and snowpack water content
+#' # Analyze monthly power generation and snowpack water content
 #' 
 
 library(raster)
 library(tidyverse)
 library(lubridate)
-library(glmnetUtils)
+library(caret)
 
 #' # import snodas swe 
 #'
-  
+
 swe_fns <- list.files('data/snodas/swe/tuo',glob2rx('^masked*.tif'),full.names=T)
 swe_stack <- raster::stack(swe_fns)
 
@@ -55,13 +55,16 @@ swe_netgen %>%
   gather(var,val,netgen.MWh,swe2plot) %>% 
   ggplot()+
   geom_path(aes(x = dte,y=val,color=var))+
+  labs(y='Generated Electrity (MWh)')+
   scale_x_date(date_breaks='3 months')+
-  scale_y_continuous(sec.axis = sec_axis(trans=~./30000,name='swe.vol.km3'))+
+  scale_y_continuous(sec.axis = sec_axis(trans=~./30000,name='SWE Volume (cu. km)'))+
   scale_color_brewer(name='',
                      palette='Set1',
                      labels=c('Generated Electricity (MWh)','SWE Volume (cu. km)'))+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=.5))
- 
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=.5),
+        axis.line.y.left = element_line(color=RColorBrewer::brewer.pal(3,'Set1')[1]),
+        axis.line.y.right = element_line(color=RColorBrewer::brewer.pal(3,'Set1')[2]))
+
 #+ include=F
 # gts_netgen <- ggplot(swe_netgen)+
 #   geom_path(aes(x = dte,y=netgen.MWh))+
@@ -94,21 +97,24 @@ swe_netgen_leads <-
          netgen.MWh_lead3 = lead(netgen.MWh,3)) %>% 
   gather(timelag,netgen,contains('netgen'))
 
-#+ fig.width=18, fig.height=10
-  ggplot(swe_netgen_leads)+
-    geom_point(aes(x=swe.vol.km3,y=netgen,colour=wyrmnth))+
-    geom_path(aes(x=swe.vol.km3,y=netgen))+
-    scale_color_viridis_d(option = 'A')+
-    facet_grid(timelag~wyr,scales='fixed')
-  
-  
-  
-#' # does melt from previous month correlate with netgen?
 #' 
+#+ fig.width=18, fig.height=10
+ggplot(swe_netgen_leads)+
+  geom_point(aes(x=swe.vol.km3,y=netgen,colour=wyrmnth))+
+  geom_path(aes(x=swe.vol.km3,y=netgen))+
+  scale_color_viridis_d(option = 'A')+
+  facet_grid(timelag~wyr,scales='fixed')
+
+
+
+#' # does melt from previous month correlate with netgen?
 
 swe_netgen_melt <- 
   swe_netgen %>% 
   mutate(melt_1mth=swe.vol.km3-lag(swe.vol.km3,1))
+
+# avoid missing data, inflow is 0 for oct 2006
+swe_netgen_melt$melt_1mth[1] = 0
 
 #+ fig.width=12, fig.height=8 
 ggplot(swe_netgen_melt)+
@@ -117,30 +123,52 @@ ggplot(swe_netgen_melt)+
   facet_wrap(.~wyr,scales='fixed')+
   scale_color_viridis_d(option = 'A')
 
-#' model netgen 
- 
-library(recipes)
-library(rsample)
+#' # model hydropower generation using snow vol and month
 
-train_test_split <- initial_split(swe_netgen_melt)
-df_train <- training(train_test_split)
-df_test <- testing(train_test_split)
-rec_obj <- recipe(netgen.MWh ~ swe.vol.km3+melt_1mth+mnth, data = swe_netgen_melt) %>% 
-  step_dummy(all_predictors(), -all_numeric()) 
+run_model <- function(train_df,test_df,preproc,modeltype){
+  mdl_eval <- train(netgen.MWh ~ swe.vol.km3*melt_1mth + mnth, data = predict(preproc,newdata=train_df),
+                    method = modeltype, 
+                    trControl = fitControl)
+  preds <- predict(mdl_eval,newdata=predict(preproc,newdata=test_df))
+  train_stats <- postResample(pred=preds, obs = test_df$netgen.MWh)
+  
+  outdf <- as.data.frame(t(train_stats)) %>% 
+    as_tibble() %>% 
+    mutate(bootdata=list(data_frame(obs=test_df$netgen.MWh,pred=preds,mnth=factor(test_df$mnth,levels=c('Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep')))))
+  
+  return(outdf)
+}
 
-stand_rec <- rec_obj %>% 
-  step_center(all_predictors())  %>%
-  step_scale(all_predictors()) %>% 
-  step_spatialsign(all_predictors())
+fitControl <- trainControl(
+  method = "boot",
+  number = 10)
 
-train_rec <- prep(stand_rec, training = df_train)
-train_data <- bake(train_rec, newdata = df_train)
-test_data <- bake(train_rec, newdata = df_test)
+preproc <- preProcess(swe_netgen_melt %>% select(swe.vol.km3,mnth,melt_1mth),
+                      method='center','scale')
 
+trainIndex <- createResample(swe_netgen_melt$netgen.MWh, times=10, list=TRUE)
 
+calval_df <- map_df(.x=trainIndex,.id='bootsample',.f=function(splitInd){
+  train_df=swe_netgen_melt[splitInd,]
+  test_df=swe_netgen_melt[-splitInd,]
+  run_model(train_df=train_df,test_df=test_df,preproc=preproc,modeltype='glmnet')
+})
 
+calval_df %>% 
+  summarise_if(is.numeric,.funs = funs(mean,min,max))
 
+calval_plotdf <- 
+  calval_df %>% 
+  select(bootsample,bootdata) %>% 
+  unnest(bootdata) 
 
-mdl.lm <- lm(netgen.MWh~swe.vol.km3*melt_1mth+mnth,data=swe_netgen_melt)
-summary(mdl.lm)
+calval_plotdf %>% 
+  summarise(r2=cor(obs,pred)^2,mae=mean(abs(obs-pred),na.rm=T))
 
+ggplot(data=calval_plotdf, aes(x=obs,y=pred))+
+  geom_point(aes(color=mnth))+
+  geom_smooth(method='lm',color='black',se=T)+
+  
+  
+  
+  
