@@ -3,13 +3,14 @@ title: "Analyze monthly power generation and snowpack water content"
 author: Dominik Schneider
 output: 
   html_document:
-    self-contained
+    self_contained: true
+    fig_caption: true
 editor_options: 
   chunk_output_type: console
 ---
 
 
-```{r setup}
+```{r setup, message=F}
 library(raster)
 library(tidyverse)
 library(lubridate)
@@ -44,7 +45,7 @@ netgen <- readRDS('data/energy_information/netgen_2006-2017.rds')
 # combine swe vol and netgen
 
 ```{r }
-swe_netgen <- right_join(swe_vol,netgen) %>% 
+swe_netgen <- right_join(swe_vol,netgen, by='dte') %>% 
   mutate(
     wyr=case_when(#it's important to use water year, since snow accumulation begins in fall of the previous year
       mnth < 'Oct' ~ yr,
@@ -179,12 +180,31 @@ calval_df <- map_df(.x=trainIndex,.id='bootsample',.f=function(splitInd){
   run_model(train_df=train_df,test_df=test_df,preproc=preproc,modeltype='glmnet')
 })
 
+```
+
+```{r}
+# we can use t distribution to estimate the confidence intervals because the qqplots of the error metrics show these to be reasonably normally distributed, as you might expect from modeling random samples
+# plot(qqnorm(calval_df$RMSE))
+# plot(qqnorm(calval_df$Rsquared))
+# plot(qqnorm(calval_df$MAE))
+
+uci <- function(x,alpha=0.05) {
+  mean(x,na.rm=T)+qt(1-alpha/2,length(x)-1)*sd(x)/sqrt(length(x))
+}
+lci <- function(x,alpha=0.05) {
+  mean(x,na.rm=T)-qt(1-alpha/2,length(x)-1)*sd(x)/sqrt(length(x))
+}
+
 calval_df %>% 
-  summarise_if(is.numeric,.funs = funs(mean,min,max)) %>% 
+  summarise_if(is.numeric,.funs = funs(mean,uci,lci)) %>% 
   gather(var,val) %>% 
   separate(var,into=c('metric','stat')) %>% 
-  spread(metric,val)
+  spread(metric,val) %>% 
+  knitr::kable()
 
+```
+
+```{r}
 calval_plotdf <- 
   calval_df %>% 
   select(bootsample,bootdata) %>% 
@@ -193,6 +213,11 @@ calval_plotdf <-
 ggplot(data=calval_plotdf, aes(x=obs,y=pred))+
   geom_point(aes(color=mnth))+
   geom_smooth(method='lm',color='black',se=T)+
+  labs(x='Observed Generation (MWh)',
+       y='Predicted Generation (MWh)',
+       title = 'Observed vs Predicted Hydropower Generation',
+       subtitle = 'Predicted with SWE volume, previous month\'s melt, and month\nwith an elastic net linear regression' )+
+  scale_color_viridis_d(name='Month', option='A')
   
 ```
 
