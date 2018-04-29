@@ -1,14 +1,24 @@
-#' # Analyze monthly power generation and snowpack water content
-#' 
+---
+title: "Analyze monthly power generation and snowpack water content"
+author: Dominik Schneider
+output: 
+  html_document:
+    self-contained
+editor_options: 
+  chunk_output_type: console
+---
 
+
+```{r setup}
 library(raster)
 library(tidyverse)
 library(lubridate)
 library(caret)
+```
 
-#' # import snodas swe 
-#'
+# import snodas swe 
 
+```{r }
 swe_fns <- list.files('data/snodas/swe/tuo',glob2rx('^masked*.tif'),full.names=T)
 swe_stack <- raster::stack(swe_fns)
 
@@ -23,14 +33,17 @@ swe_vol <-
   separate(dte, into=c('a','b','basin','dte')) %>% 
   dplyr::select(-a,-b,-swe.vol) %>% 
   mutate(dte=lubridate::ymd(dte))
+```
 
+# import hydropower generation
 
-#' # import netgen
-
+```{r }
 netgen <- readRDS('data/energy_information/netgen_2006-2017.rds')
+```
 
-#' # combine swe vol and netgen
+# combine swe vol and netgen
 
+```{r }
 swe_netgen <- right_join(swe_vol,netgen) %>% 
   mutate(
     wyr=case_when(#it's important to use water year, since snow accumulation begins in fall of the previous year
@@ -46,10 +59,11 @@ swe_netgen$basin[1] <- 'tuo'
 swe_netgen$swe.vol.km3[1] <- 0
 
 # View(swe_netgen)
+```
 
-#' ## plot timeseries of netgen and swe vol
+## plot timeseries of netgen and swe vol
 
-#+ fig.width=16
+```{r fig.width=16}
 swe_netgen %>% 
   mutate(swe2plot=swe.vol.km3*30000) %>% 
   gather(var,val,netgen.MWh,swe2plot) %>% 
@@ -65,7 +79,9 @@ swe_netgen %>%
         axis.line.y.left = element_line(color=RColorBrewer::brewer.pal(3,'Set1')[1]),
         axis.line.y.right = element_line(color=RColorBrewer::brewer.pal(3,'Set1')[2]))
 
-#+ include=F
+```
+
+```{r include=F}
 # gts_netgen <- ggplot(swe_netgen)+
 #   geom_path(aes(x = dte,y=netgen.MWh))+
 #   scale_x_date(date_breaks='3 months')+
@@ -79,36 +95,41 @@ swe_netgen %>%
 #                    rel_heights = c(.6,.4),
 #                    align='v')
 # gts_stacked
+```
 
-#' # monthly trends in netgen 
-#+ fig.width=12, fig.height=8
+# monthly trends in netgen 
+
+```{r fig.width=12, fig.height=8}
 ggplot(swe_netgen)+
   geom_path(aes(x=wyrmnth,y=netgen.MWh,group=wyr))+
   geom_point(aes(x=wyrmnth,y=netgen.MWh))+
   scale_color_viridis_d(option = 'A')+
   facet_wrap(.~wyr,scales='fixed')
+```
 
+## are leads in netgen correlated with swe?
 
-#' ## are leads in netgen correlated with swe?
+```{r }
 swe_netgen_leads <- 
   swe_netgen %>% 
   mutate(netgen.MWh_lead1 = lead(netgen.MWh,1),
          netgen.MWh_lead2 = lead(netgen.MWh,2),
          netgen.MWh_lead3 = lead(netgen.MWh,3)) %>% 
   gather(timelag,netgen,contains('netgen'))
+```
 
-#' 
-#+ fig.width=18, fig.height=10
+
+```{r fig.width=18, fig.height=10}
 ggplot(swe_netgen_leads)+
   geom_point(aes(x=swe.vol.km3,y=netgen,colour=wyrmnth))+
   geom_path(aes(x=swe.vol.km3,y=netgen))+
   scale_color_viridis_d(option = 'A')+
   facet_grid(timelag~wyr,scales='fixed')
+```
 
+# does melt from previous months correlate with netgen?
 
-
-#' # does melt from previous month correlate with netgen?
-
+```{r }
 swe_netgen_melt <- 
   swe_netgen %>% 
   mutate(melt_1mth=swe.vol.km3-lag(swe.vol.km3,1))
@@ -116,15 +137,19 @@ swe_netgen_melt <-
 # avoid missing data, inflow is 0 for oct 2006
 swe_netgen_melt$melt_1mth[1] = 0
 
-#+ fig.width=12, fig.height=8 
+```
+
+```{r fig.width=12, fig.height=8}
 ggplot(swe_netgen_melt)+
   # geom_path(aes(x=melt_1mth,y=netgen.MWh))+
   geom_point(aes(x=melt_1mth,y=netgen.MWh,color=wyrmnth))+
   facet_wrap(.~wyr,scales='fixed')+
   scale_color_viridis_d(option = 'A')
+```
 
-#' # model hydropower generation using snow vol and month
+# model hydropower generation using snow vol and month
 
+```{r }
 run_model <- function(train_df,test_df,preproc,modeltype){
   mdl_eval <- train(netgen.MWh ~ swe.vol.km3*melt_1mth + mnth, data = predict(preproc,newdata=train_df),
                     method = modeltype, 
@@ -155,20 +180,19 @@ calval_df <- map_df(.x=trainIndex,.id='bootsample',.f=function(splitInd){
 })
 
 calval_df %>% 
-  summarise_if(is.numeric,.funs = funs(mean,min,max))
+  summarise_if(is.numeric,.funs = funs(mean,min,max)) %>% 
+  gather(var,val) %>% 
+  separate(var,into=c('metric','stat')) %>% 
+  spread(metric,val)
 
 calval_plotdf <- 
   calval_df %>% 
   select(bootsample,bootdata) %>% 
   unnest(bootdata) 
 
-calval_plotdf %>% 
-  summarise(r2=cor(obs,pred)^2,mae=mean(abs(obs-pred),na.rm=T))
-
 ggplot(data=calval_plotdf, aes(x=obs,y=pred))+
   geom_point(aes(color=mnth))+
   geom_smooth(method='lm',color='black',se=T)+
   
-  
-  
-  
+```
+
