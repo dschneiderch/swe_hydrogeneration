@@ -8,7 +8,7 @@ dir_conus <- 'data/snodas/swe/conus'
 dir.create(dir_conus,rec=T,showWarnings = F)
 
 #' # run through the years 
-for(yr in 2004:2012){
+for(yr in 2004:2017){
   mth=1:12
   dte=as.Date(paste(yr,mth,'01',sep='-')) #only the 1st of the month
   mth_str <- strftime(dte,'%m_%b')

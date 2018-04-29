@@ -21,7 +21,7 @@ fns <- dir(dir_snodas, pattern='.Hdr$', full.names=T)
 
 #' ## Setup new directory to save cropped files
 dir_tuo <- 'data/snodas/swe/tuo'
-dir.create(dir_tuo,rec=T)
+dir.create(dir_tuo,rec=T,showWarnings = FALSE)
 
 #' # Read CONUS SNODAS file and crop to extents of small basin
 f=fns[1]
@@ -33,10 +33,15 @@ purrr:::walk(rev(fns),function(f){
   
   # thre is a comment on line 4 of the metadata file that is causing an error for some files. I dont think its important for the general structure  so removing
   rl <- read_lines(f)
-  if(grepl('BARD',rl[4])){
-    rl <- rl[-4]
-    write_lines(x=rl,path=f)
-  }
+  rl2 <- str_trim(rl)
+  rl3 <- map_chr(rl2,function(x){
+    # print(x)
+  if(grepl('BARD',x)){
+    x <- 'BARD codes too long'
+  } 
+    return(x)
+  })
+  write_lines(x=rl3,path=f)
   
   if(!file.exists(myfile_full)){
     gdalUtils::gdalwarp(f,
@@ -54,7 +59,7 @@ purrr:::walk(rev(fns),function(f){
 })
 
 #' # Scale data and mask basin boundary
-tif_fns <- dir(path='data/snodas/swe/tuo','*.tif$',full.names=T)
+tif_fns <- dir(path='data/snodas/swe/tuo',glob2rx('^swe_tuo*.tif$'),full.names=T)
 swe_stack <- raster::stack(tif_fns) / 1000 # convert mm to meters
 # names(swe_stack) <- sub('swe_','',names(swe_stack))#drop the first part of the names so we can overwrite exact same filename 
 poly_raster <- fasterize::fasterize(tuo_border, swe_stack[[1]]) #need to create a basin mask
