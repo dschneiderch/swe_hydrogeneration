@@ -6,7 +6,7 @@ output:
     self_contained: true
     fig_caption: true
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 ---
 
 
@@ -16,6 +16,33 @@ library(tidyverse)
 library(lubridate)
 library(caret)
 ```
+
+```{r figure_caption_functions, echo=FALSE}
+# https://stackoverflow.com/questions/37116632/rmarkdown-html-number-figures/47298632#47298632
+#Determine the output format of the document
+outputFormat   = knitr::opts_knit$get("rmarkdown.pandoc.to")
+
+#Figure and Table Caption Numbering, for HTML do it manually
+capTabNo = 1; capFigNo = 1;
+
+#Function to add the Table Number
+capTab = function(x){
+  if(outputFormat == 'html'){
+    x = paste0("Table ",capTabNo,". ",x)
+    capTabNo <<- capTabNo + 1
+  }; x
+}
+
+#Function to add the Figure Number
+capFig = function(x){
+  if(outputFormat == 'html'){
+    x = paste0("Figure ",capFigNo,". ",x)
+    capFigNo <<- capFigNo + 1
+  }; x
+}
+```
+
+The import steps below assume you have run R scripts 01-03 in the scripts folder of this github repository (github.com/dschneiderch/swe_hydrogeneration).
 
 # import snodas swe 
 
@@ -64,14 +91,17 @@ swe_netgen$swe.vol.km3[1] <- 0
 
 ## plot timeseries of netgen and swe vol
 
-```{r fig.width=16}
+The timeseries clearly shows a relationship between generated hydropower and SWE volume.
+
+```{r fig.width=16, fig.cap=capFig("Timeseries of generated hydropower and SWE volume")}
+
 swe_netgen %>% 
   mutate(swe2plot=swe.vol.km3*30000) %>% 
   gather(var,val,netgen.MWh,swe2plot) %>% 
   ggplot()+
   geom_path(aes(x = dte,y=val,color=var))+
-  labs(y='Generated Electrity (MWh)')+
-  scale_x_date(date_breaks='3 months')+
+  labs(y='Generated Hydropower (MWh)')+
+  scale_x_date(name='Date',date_breaks='3 months')+
   scale_y_continuous(sec.axis = sec_axis(trans=~./30000,name='SWE Volume (cu. km)'))+
   scale_color_brewer(name='',
                      palette='Set1',
@@ -81,6 +111,8 @@ swe_netgen %>%
         axis.line.y.right = element_line(color=RColorBrewer::brewer.pal(3,'Set1')[2]))
 
 ```
+
+
 
 ```{r include=F}
 # gts_netgen <- ggplot(swe_netgen)+
@@ -100,10 +132,14 @@ swe_netgen %>%
 
 # monthly trends in netgen 
 
-```{r fig.width=12, fig.height=8}
+The monthly analysis clearly shows consistent trends in hydropower generation by month. Jan and Feb exhibit reductions in power output. I would suggest that the operator is filling the reservoir to boost storage for the upcoming summer season. Notably, even in 2011, which exhibited a very high snowpack, power generation dipped in Jan.
+
+```{r, fig.width=12, fig.height=8, fig.cap=capFig("Hydropower generation by month")}
 ggplot(swe_netgen)+
   geom_path(aes(x=wyrmnth,y=netgen.MWh,group=wyr))+
   geom_point(aes(x=wyrmnth,y=netgen.MWh))+
+  labs(x='Month',
+       y='Generated Hydropower (MWh)')+
   scale_color_viridis_d(option = 'A')+
   facet_wrap(.~wyr,scales='fixed')
 ```
@@ -114,18 +150,21 @@ ggplot(swe_netgen)+
 swe_netgen_leads <- 
   swe_netgen %>% 
   mutate(netgen.MWh_lead1 = lead(netgen.MWh,1),
-         netgen.MWh_lead2 = lead(netgen.MWh,2),
-         netgen.MWh_lead3 = lead(netgen.MWh,3)) %>% 
+         netgen.MWh_lead2 = lead(netgen.MWh,2)) %>% 
   gather(timelag,netgen,contains('netgen'))
 ```
 
+The relationship between SWE volume and hydropower generation does not vary hugely for different SWE lead times. A hysteresis effect is evident in the figure, suggesting that the hydropower generation follows a different pattern while the snowpack is accumulating than while the snowpack is melting (declining). Specifically, power generation increases as SWE increases and then remains relatively high as SWE decreases. 
 
-```{r fig.width=18, fig.height=10}
+```{r, fig.width=18, fig.height=10, fig.cap=capFig("SWE volume vs Generated Electricity for different lead times.")}
 ggplot(swe_netgen_leads)+
   geom_point(aes(x=swe.vol.km3,y=netgen,colour=wyrmnth))+
   geom_path(aes(x=swe.vol.km3,y=netgen))+
-  scale_color_viridis_d(option = 'A')+
-  facet_grid(timelag~wyr,scales='fixed')
+  scale_color_viridis_d(name='Month',option = 'A')+
+  facet_grid(timelag~wyr,scales='fixed')+
+  labs(x='SWE Volume (cu. km)',
+       y='Generated Hydropower (MWh)',
+       subtitle='Lead1 refers to the SWE volume 1 month prior to the generated hydropower, lead2 is 2 months, and so forth')
 ```
 
 # does melt from previous months correlate with netgen?
@@ -133,26 +172,35 @@ ggplot(swe_netgen_leads)+
 ```{r }
 swe_netgen_melt <- 
   swe_netgen %>% 
-  mutate(melt_1mth=swe.vol.km3-lag(swe.vol.km3,1))
+  mutate(melt_1mth=swe.vol.km3-lag(swe.vol.km3,1),
+         melt_1mth=ifelse(is.na(melt_1mth),0,melt_1mth),
+         swe_cum=cumsum(melt_1mth))
 
 # avoid missing data, inflow is 0 for oct 2006
 swe_netgen_melt$melt_1mth[1] = 0
 
 ```
 
-```{r fig.width=12, fig.height=8}
+Some years, such as 2008, the change in SWE in the previous month is strongly related to the generated hydropower. One would expect the change in SWE to indicate whether it is the accumulation or melt season. It may also provide a measure of the inflow to the reservoir, and thus how thrifty the operator needs to be, but this relationship is likely confounded by the amount of snow still in the basin.
+
+```{r fig.width=12, fig.height=8, fig.cap=capFig("Previous month's change in SWE volume vs generated hydropower")}
 ggplot(swe_netgen_melt)+
   # geom_path(aes(x=melt_1mth,y=netgen.MWh))+
   geom_point(aes(x=melt_1mth,y=netgen.MWh,color=wyrmnth))+
   facet_wrap(.~wyr,scales='fixed')+
-  scale_color_viridis_d(option = 'A')
+  scale_color_viridis_d(name='Month',option = 'A')+
+  labs(x='Change in SWE volume from the previous month (cu. km)',
+       y='Generated Hydropower (MWh)',
+       subtitle='Negative changes indicate a loss in SWE. Positive changes indicate a gain in SWE')
 ```
 
-# model hydropower generation using snow vol and month
+# Forecast hydropower generation using snow volume, change in snow volume, and month
+
+Based on the figures above, I use SWE volume from the beginning of the month (`swe.vol.km3`), change in SWE the previous month (`melt_1mth`), and month (`wyrmnth`) to predict hydropower generation. I used bootstrapping resampling with replacement to test the ability of a model with these 3 simple predictors. Since hydropower generation isn't normally distributed, we'll use randomForest regression model instead of a linear regression. 
 
 ```{r }
 run_model <- function(train_df,test_df,preproc,modeltype){
-  mdl_eval <- train(netgen.MWh ~ swe.vol.km3*melt_1mth + mnth, data = predict(preproc,newdata=train_df),
+  mdl_eval <- train(netgen.MWh ~ swe.vol.km3 * melt_1mth + wyrmnth, data = predict(preproc,newdata=train_df),
                     method = modeltype, 
                     trControl = fitControl)
   preds <- predict(mdl_eval,newdata=predict(preproc,newdata=test_df))
@@ -160,7 +208,8 @@ run_model <- function(train_df,test_df,preproc,modeltype){
   
   outdf <- as.data.frame(t(train_stats)) %>% 
     as_tibble() %>% 
-    mutate(bootdata=list(data_frame(obs=test_df$netgen.MWh,pred=preds,mnth=factor(test_df$mnth,levels=c('Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep')))))
+    mutate(bootdata=list(test_df %>% 
+                           mutate(pred=preds)))
   
   return(outdf)
 }
@@ -169,18 +218,20 @@ fitControl <- trainControl(
   method = "boot",
   number = 10)
 
-preproc <- preProcess(swe_netgen_melt %>% select(swe.vol.km3,mnth,melt_1mth),
+preproc <- preProcess(swe_netgen_melt %>% select(swe.vol.km3,wyrmnth,melt_1mth),
                       method='center','scale')
 
 trainIndex <- createResample(swe_netgen_melt$netgen.MWh, times=10, list=TRUE)
-
+# splitInd <- trainIndex$Resample01
 calval_df <- map_df(.x=trainIndex,.id='bootsample',.f=function(splitInd){
   train_df=swe_netgen_melt[splitInd,]
   test_df=swe_netgen_melt[-splitInd,]
-  run_model(train_df=train_df,test_df=test_df,preproc=preproc,modeltype='glmnet')
+  run_model(train_df=train_df,test_df=test_df,preproc=preproc,modeltype='rf')
 })
 
 ```
+
+Presented below are summary statistics from the resampling, including upper and lower 95% confidence intervals.
 
 ```{r}
 # we can use t distribution to estimate the confidence intervals because the qqplots of the error metrics show these to be reasonably normally distributed, as you might expect from modeling random samples
@@ -204,20 +255,58 @@ calval_df %>%
 
 ```
 
-```{r}
+
+
+```{r, fig.cap=capFig("Bootstrap Prediction Results colored by Year")}
 calval_plotdf <- 
   calval_df %>% 
   select(bootsample,bootdata) %>% 
   unnest(bootdata) 
 
-ggplot(data=calval_plotdf, aes(x=obs,y=pred))+
-  geom_point(aes(color=mnth))+
+ggplot(data=calval_plotdf, aes(x=netgen.MWh,y=pred))+
+  geom_point(aes(color=as.factor(wyr)))+
   geom_smooth(method='lm',color='black',se=T)+
   labs(x='Observed Generation (MWh)',
        y='Predicted Generation (MWh)',
        title = 'Observed vs Predicted Hydropower Generation',
-       subtitle = 'Predicted with SWE volume, previous month\'s melt, and month\nwith an elastic net linear regression' )+
+       subtitle = 'Bootstrapped estimates of hydropower generation with randomForest regression\nPredicted with SWE volume, previous month\'s change in SWE, and month' )+
+  scale_color_viridis_d(name='Water Year', option='D')
+  
+```
+
+
+```{r, fig.cap=capFig("Bootstrap Prediction Results colored by Month")}
+ggplot(data=calval_plotdf, aes(x=netgen.MWh,y=pred))+
+  geom_point(aes(color=as.factor(wyrmnth)))+
+  geom_smooth(method='lm',color='black',se=T)+
+  labs(x='Observed Generation (MWh)',
+       y='Predicted Generation (MWh)',
+       title = 'Observed vs Predicted Hydropower Generation',
+       subtitle = 'Bootstrapped estimates of hydropower generation with randomForest regression\nPredicted with SWE volume, previous month\'s change in SWE, and month' )+
   scale_color_viridis_d(name='Month', option='A')
   
+```
+Overall the model does a good job of predicting generated hydropower. It struggles with a set of points in the lower right corner of the figures above where observed hydropower generation was between 60000 and 80000 but the model predicted only ~30000. This is evidenced in the residual plots in the appendices below as well. Several of the points are from 2011, which had an anomalously large snowpack and hydropower generation continued at nearly full capacity much longer than normal into the summer (See Figure 1). Feb 2016 also proved problematic when hydropower generation was increased a month earlier than in other years (See Figure 2). Lastly, Jul and Aug of 2007 were grossly underpredicted. My first reaction was above average rainfall, but this was not the case (https://www.cnrfc.noaa.gov/monthly_precip_2007.php). Nonetheless, spring and summer rainfall may be an important variable in some basins and should be considered in future analyses (the Tuolumne basin, however, receives less than 15% of its precipitation after the snow season). Climate variables, in general, such as precipitation and temperature, may increase predictability of generated hydropower but these would need to be forecast, which is notoriously difficult. Modeled snowpack of current conditions that is assimilated with ground observations of SWE and remotely sensed snow covered area is much more robust. The results from this study are very promising in that they predict hydropower generation to within 30% of the mean with no consistent biases. Improvements might be realized if reservoir inflows and reservoir storage levels could also be included, but I was unable to find this information as a real-time data stream.
+
+
+# Appendix - Model Residual Plots
+
+```{r}
+calval_diff <- 
+  calval_plotdf %>% 
+  mutate(diff=pred-netgen.MWh) 
+
+calval_diff %>% 
+ggplot()+
+  geom_histogram(aes(diff))
+
+calval_diff %>% 
+  ggplot()+
+  geom_point(aes(x=pred,y=diff))
+
+calval_diff %>% 
+  ggplot()+
+  geom_point(aes(x=netgen.MWh,y=diff))
+
 ```
 
