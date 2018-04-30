@@ -8,3 +8,4 @@ data/*
 map.qgd
 map.qgs
 *.html
+*.key
